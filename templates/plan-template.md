@@ -4,12 +4,13 @@
 <!-- VARIANT:ps - Run `/scripts/powershell/update-agent-context.ps1 -AgentType __AGENT__` for your AI assistant -->
 
 **Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+**Input**: Feature specification from `/specs/[###-feature-name]/spec.md` and test cases from `/specs/[###-feature-name]/test-cases.md`
 
 ## Execution Flow (/plan command scope)
 ```
-1. Load feature spec from Input path
-   → If not found: ERROR "No feature spec at {path}"
+1. Load feature spec and test cases from Input paths
+   → If spec not found: ERROR "No feature spec at {path}"
+   → If test-cases not found: ERROR "No test cases at {path}"
 2. Fill Technical Context (scan for NEEDS CLARIFICATION)
    → Detect Project Type from context (web=frontend+backend, mobile=app+api)
    → Set Structure Decision based on project type
@@ -19,7 +20,10 @@
    → Update Progress Tracking: Initial Constitution Check
 4. Execute Phase 0 → research.md
    → If NEEDS CLARIFICATION remain: ERROR "Resolve unknowns"
-5. Execute Phase 1 → contracts, data-model.md, quickstart.md, agent-specific template file (e.g., `CLAUDE.md` for Claude Code, `.github/copilot-instructions.md` for GitHub Copilot, or `GEMINI.md` for Gemini CLI).
+5. Execute Phase 1 → contracts, data-model.md, quickstart.md, test-contracts.md, test-matrices.md, agent-specific template file (e.g., `CLAUDE.md` for Claude Code, `.github/copilot-instructions.md` for GitHub Copilot, or `GEMINI.md` for Gemini CLI).
+   → Analyze both spec.md and test-cases.md for comprehensive test planning
+   → Generate test contracts with unit, integration, and end-to-end scenarios
+   → Create traceability matrices mapping requirements to tests and test cases to contracts
 6. Re-evaluate Constitution Check section
    → If new violations: Refactor design, return to Phase 1
    → Update Progress Tracking: Post-Design Constitution Check
@@ -83,10 +87,14 @@
 ### Documentation (this feature)
 ```
 specs/[###-feature]/
+├── spec.md              # Feature specification (input)
+├── test-cases.md        # Test cases (input)
 ├── plan.md              # This file (/plan command output)
 ├── research.md          # Phase 0 output (/plan command)
 ├── data-model.md        # Phase 1 output (/plan command)
 ├── quickstart.md        # Phase 1 output (/plan command)
+├── test-contracts.md    # Phase 1 output (/plan command) - NEW
+├── test-matrices.md     # Phase 1 output (/plan command) - NEW
 ├── contracts/           # Phase 1 output (/plan command)
 └── tasks.md             # Phase 2 output (/tasks command - NOT created by /plan)
 ```
@@ -164,16 +172,36 @@ ios/ or android/
    - Use standard REST/GraphQL patterns
    - Output OpenAPI/GraphQL schema to `/contracts/`
 
-3. **Generate contract tests** from contracts:
+3. **Analyze test cases and generate test contracts** → `test-contracts.md`:
+   - Load `/templates/test-contracts-template.md` as base
+   - For each test case in test-cases.md → test contract
+   - Map functional requirements to test scenarios
+   - Generate unit test contracts (isolated component testing)
+   - Generate integration test contracts (component interaction testing)
+   - Generate end-to-end test contracts (complete user workflows)
+   - Consolidate tests to minimize execution time and blocking dependencies
+   - Define test data requirements, setup/teardown procedures
+   - Identify non-testable scenarios with explicit rationale
+
+4. **Generate test traceability matrices** → `test-matrices.md`:
+   - Load `/templates/test-matrices-template.md` as base
+   - Create requirement-to-test mapping matrix
+   - Create test-case-to-contract mapping matrix
+   - Calculate coverage percentages and identify gaps
+   - Generate parallel execution groups and dependencies
+   - Create resource dependency matrix
+   - Perform gap analysis and provide recommendations
+
+5. **Generate contract tests** from contracts:
    - One test file per endpoint
    - Assert request/response schemas
    - Tests must fail (no implementation yet)
 
-4. **Extract test scenarios** from user stories:
+6. **Extract test scenarios** from user stories:
    - Each story → integration test scenario
    - Quickstart test = story validation steps
 
-5. **Update agent file incrementally** (O(1) operation):
+7. **Update agent file incrementally** (O(1) operation):
    VARIANT-INJECT
    - If exists: Add only NEW tech from current plan
    - Preserve manual additions between markers
@@ -181,7 +209,7 @@ ios/ or android/
    - Keep under 150 lines for token efficiency
    - Output to repository root
 
-**Output**: data-model.md, /contracts/*, failing tests, quickstart.md, agent-specific file
+**Output**: data-model.md, /contracts/*, test-contracts.md, test-matrices.md, failing tests, quickstart.md, agent-specific file
 
 ## Phase 2: Task Planning Approach
 *This section describes what the /tasks command will do - DO NOT execute during /plan*
