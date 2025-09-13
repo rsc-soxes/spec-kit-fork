@@ -20,14 +20,26 @@ You can execute the CLI via the module entrypoint without installing anything:
 ```bash
 # From repo root
 python -m src.specify_cli --help
-python -m src.specify_cli init demo-project --ai claude --ignore-agent-tools --script sh
+python -m src.specify_cli init demo-project --ai claude --ignore-agent-tools --script sh --local-dev
 ```
 
 If you prefer invoking the script file style (uses shebang):
 
 ```bash
-python src/specify_cli/__init__.py init demo-project --script ps
+python src/specify_cli/__init__.py init demo-project --script ps --local-dev
 ```
+
+**Important**: Use the `--local-dev` flag when developing to use your local templates instead of downloading from GitHub releases. This ensures you're testing your changes to templates, scripts, and commands.
+
+### Local Development Flag (`--local-dev`)
+
+When you pass `--local-dev` to the `specify init` command:
+- Templates are copied from your local `templates/` directory instead of downloading from GitHub
+- Scripts are copied from your local `scripts/bash/` or `scripts/powershell/` directory
+- AI assistant commands are generated from your local `templates/commands/` files
+- This includes any new templates like `test-cases-template.md` that you've added
+
+This flag only works when running the CLI from within the spec-kit repository (it auto-detects the repository root).
 
 ## 3. Use Editable Install (Isolated Environment)
 
@@ -52,7 +64,7 @@ Re-running after code edits requires no reinstall because of editable mode.
 `uvx` can run from a local path (or a Git ref) to simulate user flows:
 
 ```bash
-uvx --from . specify init demo-uvx --ai copilot --ignore-agent-tools --script sh
+uvx --from . specify init demo-uvx --ai copilot --ignore-agent-tools --script sh --local-dev
 ```
 
 You can also point uvx at a specific branch without merging:
@@ -63,26 +75,28 @@ git push origin your-feature-branch
 uvx --from git+https://github.com/github/spec-kit.git@your-feature-branch specify init demo-branch-test --script ps
 ```
 
+**Note**: The `--local-dev` flag only works when running from a local repository. Remote uvx invocations will always download from GitHub releases.
+
 ### 4a. Absolute Path uvx (Run From Anywhere)
 
 If you're in another directory, use an absolute path instead of `.`:
 
 ```bash
 uvx --from /mnt/c/GitHub/spec-kit specify --help
-uvx --from /mnt/c/GitHub/spec-kit specify init demo-anywhere --ai copilot --ignore-agent-tools --script sh
+uvx --from /mnt/c/GitHub/spec-kit specify init demo-anywhere --ai copilot --ignore-agent-tools --script sh --local-dev
 ```
 
 Set an environment variable for convenience:
 ```bash
 export SPEC_KIT_SRC=/mnt/c/GitHub/spec-kit
-uvx --from "$SPEC_KIT_SRC" specify init demo-env --ai copilot --ignore-agent-tools --script ps
+uvx --from "$SPEC_KIT_SRC" specify init demo-env --ai copilot --ignore-agent-tools --script ps --local-dev
 ```
 
 (Optional) Define a shell function:
 ```bash
-specify-dev() { uvx --from /mnt/c/GitHub/spec-kit specify "$@"; }
+specify-dev() { uvx --from /mnt/c/GitHub/spec-kit specify "$@" --local-dev; }
 # Then
-specify-dev --help
+specify-dev init demo --ai claude --ignore-agent-tools
 ```
 
 ## 5. Testing Script Permission Logic
@@ -118,7 +132,7 @@ When testing `init --here` in a dirty directory, create a temp workspace:
 
 ```bash
 mkdir /tmp/spec-test && cd /tmp/spec-test
-python -m src.specify_cli init --here --ai claude --ignore-agent-tools --script sh  # if repo copied here
+python -m src.specify_cli init --here --ai claude --ignore-agent-tools --script sh --local-dev  # if repo copied here
 ```
 Or copy only the modified CLI portion if you want a lighter sandbox.
 
@@ -128,7 +142,7 @@ If you need to bypass TLS validation while experimenting:
 
 ```bash
 specify check --skip-tls
-specify init demo --skip-tls --ai gemini --ignore-agent-tools --script ps
+specify init demo --skip-tls --ai gemini --ignore-agent-tools --script ps --local-dev
 ```
 (Use only for local experimentation.)
 
@@ -137,9 +151,10 @@ specify init demo --skip-tls --ai gemini --ignore-agent-tools --script ps
 | Action | Command |
 |--------|---------|
 | Run CLI directly | `python -m src.specify_cli --help` |
+| Run with local templates | `python -m src.specify_cli init ... --local-dev` |
 | Editable install | `uv pip install -e .` then `specify ...` |
-| Local uvx run (repo root) | `uvx --from . specify ...` |
-| Local uvx run (abs path) | `uvx --from /mnt/c/GitHub/spec-kit specify ...` |
+| Local uvx run (repo root) | `uvx --from . specify ... --local-dev` |
+| Local uvx run (abs path) | `uvx --from /mnt/c/GitHub/spec-kit specify ... --local-dev` |
 | Git branch uvx | `uvx --from git+URL@branch specify ...` |
 | Build wheel | `uv build` |
 

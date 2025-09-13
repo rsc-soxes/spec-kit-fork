@@ -674,6 +674,174 @@ def download_and_extract_template(project_path: Path, ai_assistant: str, script_
     return project_path
 
 
+def create_local_dev_template(project_path: Path, ai_assistant: str, script_type: str, is_current_dir: bool = False, *, tracker: StepTracker | None = None) -> Path:
+    """Create a template from local repository files during development.
+    Returns project_path. Uses tracker if provided (with keys: local-setup, local-copy, local-commands).
+    """
+    # Find the repository root by looking for pyproject.toml or .git
+    current = Path(__file__).parent.parent.parent  # Go up from src/specify_cli/
+    repo_root = None
+
+    # Check common repo indicators
+    for check_path in [current, Path.cwd()]:
+        if (check_path / "pyproject.toml").exists() or (check_path / ".git").exists():
+            if (check_path / "templates").is_dir() and (check_path / "scripts").is_dir():
+                repo_root = check_path
+                break
+
+    if not repo_root:
+        raise RuntimeError("Cannot find repository root with templates/ and scripts/ directories. Make sure you're running from within the spec-kit repository.")
+
+    if tracker:
+        tracker.add("local-setup", "Setup local development template")
+        tracker.start("local-setup", f"using {repo_root}")
+
+    try:
+        # Create project directory only if not using current directory
+        if not is_current_dir:
+            project_path.mkdir(parents=True, exist_ok=True)
+
+        # Create .specify directory structure
+        specify_dir = project_path / ".specify"
+        specify_dir.mkdir(exist_ok=True)
+
+        if tracker:
+            tracker.add("local-copy", "Copy local templates and scripts")
+            tracker.start("local-copy")
+
+        # Copy templates (excluding commands/)
+        templates_src = repo_root / "templates"
+        templates_dst = specify_dir / "templates"
+        templates_dst.mkdir(exist_ok=True)
+
+        for template_file in templates_src.rglob("*"):
+            if template_file.is_file() and "commands" not in template_file.parts:
+                rel_path = template_file.relative_to(templates_src)
+                dst_file = templates_dst / rel_path
+                dst_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(template_file, dst_file)
+
+        # Copy memory if it exists
+        memory_src = repo_root / "memory"
+        if memory_src.exists():
+            memory_dst = specify_dir / "memory"
+            if memory_dst.exists():
+                shutil.rmtree(memory_dst)
+            shutil.copytree(memory_src, memory_dst)
+
+        # Copy appropriate scripts
+        scripts_src = repo_root / "scripts"
+        scripts_dst = specify_dir / "scripts"
+        scripts_dst.mkdir(exist_ok=True)
+
+        if script_type == "sh" and (scripts_src / "bash").exists():
+            shutil.copytree(scripts_src / "bash", scripts_dst / "bash")
+        elif script_type == "ps" and (scripts_src / "powershell").exists():
+            shutil.copytree(scripts_src / "powershell", scripts_dst / "powershell")
+
+        # Copy any top-level script files
+        for script_file in scripts_src.glob("*"):
+            if script_file.is_file():
+                shutil.copy2(script_file, scripts_dst / script_file.name)
+
+        if tracker:
+            tracker.complete("local-copy")
+            tracker.add("local-commands", "Generate AI assistant commands")
+            tracker.start("local-commands")
+
+        # Generate AI assistant specific commands (simplified version of the release script logic)
+        commands_src = repo_root / "templates" / "commands"
+
+        if ai_assistant == "claude":
+            claude_dir = project_path / ".claude" / "commands"
+            claude_dir.mkdir(parents=True, exist_ok=True)
+            generate_local_commands(commands_src, claude_dir, ai_assistant, script_type)
+        elif ai_assistant == "gemini":
+            gemini_dir = project_path / ".gemini" / "commands"
+            gemini_dir.mkdir(parents=True, exist_ok=True)
+            generate_local_commands(commands_src, gemini_dir, ai_assistant, script_type)
+        elif ai_assistant == "copilot":
+            copilot_dir = project_path / ".github" / "prompts"
+            copilot_dir.mkdir(parents=True, exist_ok=True)
+            generate_local_commands(commands_src, copilot_dir, ai_assistant, script_type)
+        elif ai_assistant == "cursor":
+            cursor_dir = project_path / ".cursor" / "commands"
+            cursor_dir.mkdir(parents=True, exist_ok=True)
+            generate_local_commands(commands_src, cursor_dir, ai_assistant, script_type)
+
+        if tracker:
+            tracker.complete("local-commands")
+            tracker.complete("local-setup")
+
+    except Exception as e:
+        if tracker:
+            tracker.error("local-setup", str(e))
+        raise
+
+    return project_path
+
+
+def generate_local_commands(commands_src: Path, output_dir: Path, ai_assistant: str, script_type: str):
+    """Generate AI assistant specific command files from templates/commands/"""
+    for template_file in commands_src.glob("*.md"):
+        name = template_file.stem
+        content = template_file.read_text()
+
+        # Extract description from YAML frontmatter
+        lines = content.split('\n')
+        description = ""
+        script_command = ""
+
+        in_frontmatter = False
+        for line in lines:
+            if line.strip() == "---":
+                in_frontmatter = not in_frontmatter
+                continue
+            if in_frontmatter:
+                if line.startswith("description:"):
+                    description = line.replace("description:", "").strip()
+                elif line.strip() == f"{script_type}:":
+                    # Find the script command for this script type
+                    continue
+                elif script_command == "" and line.strip().startswith(f"{script_type}:"):
+                    script_command = line.split(":", 1)[1].strip()
+
+        # Remove frontmatter and replace placeholders
+        body_lines = []
+        in_frontmatter = False
+        frontmatter_count = 0
+
+        for line in lines:
+            if line.strip() == "---":
+                frontmatter_count += 1
+                if frontmatter_count == 2:
+                    in_frontmatter = False
+                    continue
+                in_frontmatter = True
+                continue
+            if not in_frontmatter:
+                body_lines.append(line)
+
+        body = '\n'.join(body_lines)
+
+        # Replace placeholders
+        if script_command:
+            body = body.replace("{SCRIPT}", script_command)
+        body = body.replace("{ARGS}", "$ARGUMENTS" if ai_assistant in ["claude", "cursor"] else "{{args}}")
+        body = body.replace("scripts/", ".specify/scripts/")
+        body = body.replace("templates/", ".specify/templates/")
+        body = body.replace("memory/", ".specify/memory/")
+
+        # Create appropriate file format
+        if ai_assistant == "claude" or ai_assistant == "cursor":
+            (output_dir / f"{name}.md").write_text(body)
+        elif ai_assistant == "gemini":
+            toml_content = f'description = "{description}"\n\nprompt = """\n{body}\n"""'
+            (output_dir / f"{name}.toml").write_text(toml_content)
+        elif ai_assistant == "copilot":
+            (output_dir / f"{name}.prompt.md").write_text(body)
+
+
 def ensure_executable_scripts(project_path: Path, tracker: StepTracker | None = None) -> None:
     """Ensure POSIX .sh scripts under .specify/scripts (recursively) have execute bits (no-op on Windows)."""
     if os.name == "nt":
@@ -729,18 +897,19 @@ def init(
     here: bool = typer.Option(False, "--here", help="Initialize project in the current directory instead of creating a new one"),
     skip_tls: bool = typer.Option(False, "--skip-tls", help="Skip SSL/TLS verification (not recommended)"),
     debug: bool = typer.Option(False, "--debug", help="Show verbose diagnostic output for network and extraction failures"),
+    local_dev: bool = typer.Option(False, "--local-dev", help="Use local templates from repository instead of downloading from GitHub (for development)"),
 ):
     """
     Initialize a new Specify project from the latest template.
-    
+
     This command will:
     1. Check that required tools are installed (git is optional)
     2. Let you choose your AI assistant (Claude Code, Gemini CLI, GitHub Copilot, or Cursor)
-    3. Download the appropriate template from GitHub
+    3. Download the appropriate template from GitHub (or use local templates with --local-dev)
     4. Extract the template to a new project directory or current directory
     5. Initialize a fresh git repository (if not --no-git and no existing repo)
     6. Optionally set up AI assistant commands
-    
+
     Examples:
         specify init my-project
         specify init my-project --ai claude
@@ -750,6 +919,7 @@ def init(
         specify init --ignore-agent-tools my-project
         specify init --here --ai claude
         specify init --here
+        specify init my-project --ai claude --local-dev  # Use local repository templates
     """
     # Show banner first
     show_banner()
@@ -861,29 +1031,43 @@ def init(
     tracker.complete("ai-select", f"{selected_ai}")
     tracker.add("script-select", "Select script type")
     tracker.complete("script-select", selected_script)
-    for key, label in [
-        ("fetch", "Fetch latest release"),
-        ("download", "Download template"),
-        ("extract", "Extract template"),
-        ("zip-list", "Archive contents"),
-        ("extracted-summary", "Extraction summary"),
-    ("chmod", "Ensure scripts executable"),
-        ("cleanup", "Cleanup"),
-        ("git", "Initialize git repository"),
-        ("final", "Finalize")
-    ]:
-        tracker.add(key, label)
+    if local_dev:
+        for key, label in [
+            ("local-setup", "Setup local development template"),
+            ("local-copy", "Copy local templates and scripts"),
+            ("local-commands", "Generate AI assistant commands"),
+            ("chmod", "Ensure scripts executable"),
+            ("git", "Initialize git repository"),
+            ("final", "Finalize")
+        ]:
+            tracker.add(key, label)
+    else:
+        for key, label in [
+            ("fetch", "Fetch latest release"),
+            ("download", "Download template"),
+            ("extract", "Extract template"),
+            ("zip-list", "Archive contents"),
+            ("extracted-summary", "Extraction summary"),
+            ("chmod", "Ensure scripts executable"),
+            ("cleanup", "Cleanup"),
+            ("git", "Initialize git repository"),
+            ("final", "Finalize")
+        ]:
+            tracker.add(key, label)
 
     # Use transient so live tree is replaced by the final static render (avoids duplicate output)
     with Live(tracker.render(), console=console, refresh_per_second=8, transient=True) as live:
         tracker.attach_refresh(lambda: live.update(tracker.render()))
         try:
-            # Create a httpx client with verify based on skip_tls
-            verify = not skip_tls
-            local_ssl_context = ssl_context if verify else False
-            local_client = httpx.Client(verify=local_ssl_context)
-
-            download_and_extract_template(project_path, selected_ai, selected_script, here, verbose=False, tracker=tracker, client=local_client, debug=debug)
+            if local_dev:
+                # Use local repository templates
+                create_local_dev_template(project_path, selected_ai, selected_script, here, tracker=tracker)
+            else:
+                # Download from GitHub releases
+                verify = not skip_tls
+                local_ssl_context = ssl_context if verify else False
+                local_client = httpx.Client(verify=local_ssl_context)
+                download_and_extract_template(project_path, selected_ai, selected_script, here, verbose=False, tracker=tracker, client=local_client, debug=debug)
 
             # Ensure scripts are executable (POSIX)
             ensure_executable_scripts(project_path, tracker=tracker)
